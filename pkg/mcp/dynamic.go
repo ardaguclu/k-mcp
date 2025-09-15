@@ -17,8 +17,14 @@ limitations under the License.
 package mcp
 
 import (
+	"path/filepath"
+	"time"
+
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/discovery/cached/disk"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/homedir"
 )
 
 type DynamicConfig struct {
@@ -35,7 +41,7 @@ func NewDynamicConfig(certificateAuthority string, insecure bool, tlsServerName 
 	}
 }
 
-func (d *DynamicConfig) LoadRestConfig(bearerToken, apiServerUrl string) (*dynamic.DynamicClient, error) {
+func (d *DynamicConfig) LoadRestConfig(bearerToken, apiServerUrl string) (*dynamic.DynamicClient, discovery.CachedDiscoveryInterface, error) {
 	r := &rest.Config{
 		Host:        apiServerUrl,
 		BearerToken: bearerToken,
@@ -49,7 +55,14 @@ func (d *DynamicConfig) LoadRestConfig(bearerToken, apiServerUrl string) (*dynam
 	}
 	dynamicClient, err := dynamic.NewForConfig(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return dynamicClient, nil
+
+	cacheDir := filepath.Join(homedir.HomeDir(), "k-mcp-discovery-cache", apiServerUrl)
+	cachedDiscoveryClient, err := disk.NewCachedDiscoveryClientForConfig(r, cacheDir, "", time.Hour*6)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return dynamicClient, cachedDiscoveryClient, nil
 }

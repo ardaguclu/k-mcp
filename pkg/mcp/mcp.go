@@ -172,7 +172,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceListInput) (*mcp.CallToolResult, any, error) {
 		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
-		dynamicClient, err := dynamicConfig.LoadRestConfig(bearerToken, apiServerUrls[0])
+		dynamicClient, discoveryClient, err := dynamicConfig.LoadRestConfig(bearerToken, apiServerUrls[0])
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
 		}
