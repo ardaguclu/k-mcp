@@ -33,6 +33,9 @@ var (
 	# Run MCP Server with default values
 	k-mcp
 
+	# Show the version of MCP Server
+	k-mcp version
+
 	# Run MCP Server with custom values
 	k-mcp --port=8080
 `
