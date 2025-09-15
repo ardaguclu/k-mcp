@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -180,7 +181,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
 			}
-			gvr, err := FindResource(input.Resource, discoveryClient, request.Session)
+			gvr, _, err := FindResource(input.Resource, discoveryClient, request.Session)
 			if err != nil {
 				return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
 			}
@@ -221,9 +222,40 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
 			}
-			gvr, err := FindResource(input.Resource, discoveryClient, request.Session)
+			gvr, isNamespaced, err := FindResource(input.Resource, discoveryClient, request.Session)
 			if err != nil {
 				return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
+			}
+
+			if isNamespaced && input.Namespace == "" {
+				defaultValue := json.RawMessage(`"default"`)
+				elicitResult, err := request.Session.Elicit(context.Background(), &mcp.ElicitParams{
+					Message: fmt.Sprintf("Namespace is required for namespaced resource %s. Please specify a namespace:", input.Resource),
+					RequestedSchema: &jsonschema.Schema{
+						Type: "object",
+						Properties: map[string]*jsonschema.Schema{
+							"namespace": {
+								Type:        "string",
+								Description: "The namespace for the resource",
+								Default:     defaultValue,
+							},
+						},
+						Required: []string{"namespace"},
+					},
+				})
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to elicit namespace: %w", err)
+				}
+
+				if elicitResult.Action != "accept" {
+					return nil, nil, fmt.Errorf("user cancelled namespace selection")
+				}
+
+				namespace, ok := elicitResult.Content["namespace"].(string)
+				if !ok || namespace == "" {
+					namespace = "default"
+				}
+				input.Namespace = namespace
 			}
 
 			namespace := input.Namespace
