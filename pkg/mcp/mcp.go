@@ -31,6 +31,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/ardaguclu/k-mcp/pkg/version"
 )
@@ -168,7 +170,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 	}, nil)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "resource_list",
-		Description: "List Kubernetes resources of a specific type",
+		Description: "List Kubernetes resources of a specific type. This can be pods, deployments.v1.apps or ",
 	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceListInput) (*mcp.CallToolResult, any, error) {
 		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
@@ -180,13 +182,64 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 		if err != nil {
 			return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
 		}
-		return nil, nil, nil
+		
+		namespace := input.Namespace
+		var resources *unstructured.UnstructuredList
+		if namespace != "" {
+			resources, err = dynamicClient.Resource(gvr).Namespace(namespace).List(context.Background(), v1.ListOptions{})
+		} else {
+			resources, err = dynamicClient.Resource(gvr).List(context.Background(), v1.ListOptions{})
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to list resources: %w", err)
+		}
+		
+		var result []map[string]interface{}
+		for _, item := range resources.Items {
+			result = append(result, item.Object)
+		}
+		
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{
+					Text: fmt.Sprintf("Found %d %s resources", len(result), input.Resource),
+				},
+			},
+		}, result, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "resource_get",
 		Description: "Get detailed information about a specific Kubernetes resource",
 	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceGetInput) (*mcp.CallToolResult, any, error) {
-		return nil, nil, nil
+		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
+		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
+		dynamicClient, discoveryClient, err := dynamicConfig.LoadRestConfig(bearerToken, apiServerUrls[0])
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
+		}
+		gvr, err := FindResource(input.Resource, discoveryClient, request.Session)
+		if err != nil {
+			return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
+		}
+		
+		namespace := input.Namespace
+		var resource *unstructured.Unstructured
+		if namespace != "" {
+			resource, err = dynamicClient.Resource(gvr).Namespace(namespace).Get(context.Background(), input.Name, v1.GetOptions{})
+		} else {
+			resource, err = dynamicClient.Resource(gvr).Get(context.Background(), input.Name, v1.GetOptions{})
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get resource: %w", err)
+		}
+		
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{
+					Text: fmt.Sprintf("Retrieved %s/%s", input.Resource, input.Name),
+				},
+			},
+		}, resource.Object, nil
 	})
 	server.AddReceivingMiddleware(loggingMiddleware)
 	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
