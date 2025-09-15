@@ -17,9 +17,14 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"strconv"
+	"strings"
 
+	"github.com/ardaguclu/k-mcp/pkg/mcp"
 	"github.com/spf13/cobra"
 
 	"k8s.io/cli-runtime/pkg/genericiooptions"
@@ -46,7 +51,10 @@ const DefaultPort = "8080"
 // KMCPOptions provides information required to run
 // MCP Server
 type KMCPOptions struct {
-	Port string
+	Port     string
+	LogLevel string
+
+	Server *mcp.Server
 
 	genericiooptions.IOStreams
 }
@@ -86,6 +94,7 @@ func NewCmdKMCP(streams genericiooptions.IOStreams) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&o.Port, "port", o.Port, "Start a streamable HTTP on the specified port. Default is 8080")
+	cmd.Flags().StringVar(&o.LogLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 
 	cmd.AddCommand(NewCmdVersion(streams))
 
@@ -94,20 +103,52 @@ func NewCmdKMCP(streams genericiooptions.IOStreams) *cobra.Command {
 
 // Complete sets all information required to run the MCP server
 func (o *KMCPOptions) Complete(cmd *cobra.Command) error {
-	return nil
-}
-
-// Validate ensures that all required arguments and flag values are provided
-func (o *KMCPOptions) Validate() error {
 	_, err := strconv.Atoi(o.Port)
 	if err != nil {
 		return fmt.Errorf("invalid port number %s err: %w", o.Port, err)
 	}
 
+	var level slog.Level
+	switch strings.ToLower(o.LogLevel) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: level,
+	})
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
+
+	o.Server = mcp.NewServer(o.Port)
 	return nil
+}
+
+// Validate ensures that all required arguments and flag values are provided
+func (o *KMCPOptions) Validate() error {
+	validLevels := []string{"debug", "info", "warn", "error"}
+	for _, valid := range validLevels {
+		if strings.ToLower(o.LogLevel) == valid {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid log level %s, must be one of: %s", o.LogLevel, strings.Join(validLevels, ", "))
 }
 
 // Run runs the MCP Server
 func (o *KMCPOptions) Run() error {
+	ctx := context.Background()
+
+	if err := o.Server.Run(ctx); err != nil {
+		return err
+	}
 	return nil
 }
