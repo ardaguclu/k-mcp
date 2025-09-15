@@ -54,7 +54,7 @@ type JWTClaims struct {
 	jwt.RegisteredClaims
 }
 
-func (s *Server) Run(ctx context.Context) error {
+func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 	mux := http.NewServeMux()
 
 	verifyToken := func(ctx context.Context, tokenString string, _ *http.Request) (*auth.TokenInfo, error) {
@@ -90,19 +90,29 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 
 		found := false
+		apiServers := make([]string, 0)
 		for _, aud := range claims.Audience {
 			if aud == s.Audience {
 				found = true
-				break
+			} else {
+				apiServers = append(apiServers, aud)
 			}
 		}
 		if !found {
 			return nil, fmt.Errorf("%w: token audience does not match %s", auth.ErrInvalidToken, s.Audience)
 		}
 
+		if len(apiServers) == 0 {
+			return nil, fmt.Errorf("%w: apiserver url not found in audience %s", auth.ErrInvalidToken, s.Audience)
+		}
+
 		return &auth.TokenInfo{
 			Scopes:     claims.Scopes,
 			Expiration: claims.ExpiresAt.Time,
+			Extra: map[string]any{
+				"audience":     apiServers,
+				"bearer_token": tokenString,
+			},
 		}, nil
 	}
 
@@ -156,6 +166,25 @@ func (s *Server) Run(ctx context.Context) error {
 		Name:    "k-mcp",
 		Version: version.Get().Version,
 	}, nil)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "resource_list",
+		Description: "List Kubernetes resources of a specific type",
+	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceListInput) (*mcp.CallToolResult, any, error) {
+		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
+		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
+		dynamicClient, err := dynamicConfig.LoadRestConfig(bearerToken, apiServerUrls[0])
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
+		}
+
+		return nil, nil, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "resource_get",
+		Description: "Get detailed information about a specific Kubernetes resource",
+	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceGetInput) (*mcp.CallToolResult, any, error) {
+		return nil, nil, nil
+	})
 	server.AddReceivingMiddleware(loggingMiddleware)
 	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return server
@@ -216,4 +245,15 @@ func (s *Server) Run(ctx context.Context) error {
 
 	slog.InfoContext(shutdownCtx, "HTTP server shutdown complete")
 	return nil
+}
+
+type ResourceListInput struct {
+	Resource  string `json:"resource" jsonschema:"required,description=The Kubernetes resource type (e.g. pods services deployments)"`
+	Namespace string `json:"namespace,omitempty" jsonschema:"description=The namespace to list resources from (optional defaults to all namespaces)"`
+}
+
+type ResourceGetInput struct {
+	Resource  string `json:"resource" jsonschema:"required,description=The Kubernetes resource type (e.g. pod service deployment)"`
+	Name      string `json:"name" jsonschema:"required,description=The name of the resource"`
+	Namespace string `json:"namespace,omitempty" jsonschema:"description=The namespace of the resource (required for namespaced resources)"`
 }

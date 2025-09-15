@@ -54,11 +54,15 @@ const (
 // KMCPOptions provides information required to run
 // MCP Server
 type KMCPOptions struct {
-	Port     string
-	LogLevel string
-	Audience string
+	Port                    string
+	LogLevel                string
+	Audience                string
+	TLSInsecure             bool
+	TLSCertificateAuthority string
+	TLSServerName           string
 
-	Server *mcp.Server
+	Server        *mcp.Server
+	DynamicConfig *mcp.DynamicConfig
 
 	genericiooptions.IOStreams
 }
@@ -101,6 +105,9 @@ func NewCmdKMCP(streams genericiooptions.IOStreams) *cobra.Command {
 	cmd.Flags().StringVar(&o.Port, "port", o.Port, "Start a streamable HTTP on the specified port. Default is 8080")
 	cmd.Flags().StringVar(&o.LogLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	cmd.Flags().StringVar(&o.Audience, "audience", o.Audience, "JWT token audience for validation. Default is k-mcp")
+	cmd.Flags().BoolVar(&o.TLSInsecure, "insecure", false, "Skip TLS certificate verification when connecting to Kubernetes API server")
+	cmd.Flags().StringVar(&o.TLSCertificateAuthority, "certificate-authority", "", "Path to a cert authority file for the certificate authority in TLS")
+	cmd.Flags().StringVar(&o.TLSServerName, "tls-server-name", o.TLSServerName, "The name of the server to use for TLS")
 
 	cmd.AddCommand(NewCmdVersion(streams))
 
@@ -135,6 +142,18 @@ func (o *KMCPOptions) Complete(cmd *cobra.Command) error {
 	slog.SetDefault(logger)
 
 	o.Server = mcp.NewServer(o.Port, o.Audience)
+
+	_, err = os.ReadFile(o.TLSCertificateAuthority)
+	if err != nil {
+		return fmt.Errorf("failed to read CA certificate from %s: %w", o.TLSCertificateAuthority, err)
+	}
+
+	if o.TLSInsecure {
+		slog.Warn("Using insecure TLS client config. This is not recommended for production.")
+	}
+
+	o.DynamicConfig = mcp.NewDynamicConfig(o.TLSCertificateAuthority, o.TLSInsecure, o.TLSServerName)
+
 	return nil
 }
 
@@ -153,7 +172,7 @@ func (o *KMCPOptions) Validate() error {
 func (o *KMCPOptions) Run() error {
 	ctx := context.Background()
 
-	if err := o.Server.Run(ctx); err != nil {
+	if err := o.Server.Run(ctx, o.DynamicConfig); err != nil {
 		return err
 	}
 	return nil
