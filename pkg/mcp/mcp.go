@@ -176,7 +176,10 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
 		}
-
+		gvr, err := FindResource(input.Resource, discoveryClient, request.Session)
+		if err != nil {
+			return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
+		}
 		return nil, nil, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{
