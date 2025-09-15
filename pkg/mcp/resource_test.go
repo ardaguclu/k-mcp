@@ -178,6 +178,117 @@ func TestFindResource(t *testing.T) {
 			},
 			expectedError: "resource \"po\" not found, did you mean one of these: pods.v1., podtemplates.v1.",
 		},
+		{
+			name:         "exact match - ingress with networking.k8s.io group",
+			resourceName: "Ingress.networking.k8s.io",
+			setupDiscovery: func() *cmdtesting.FakeCachedDiscoveryClient {
+				dc := cmdtesting.NewFakeCachedDiscoveryClient()
+				dc.PreferredResources = []*v1.APIResourceList{
+					{
+						GroupVersion: "networking.k8s.io/v1",
+						APIResources: []v1.APIResource{
+							{Name: "ingresses", Kind: "Ingress", Namespaced: true},
+							{Name: "networkpolicies", Kind: "NetworkPolicy", Namespaced: true},
+						},
+					},
+				}
+				return dc
+			},
+			expectedGVR: schema.GroupVersionResource{
+				Group:    "networking.k8s.io",
+				Version:  "v1",
+				Resource: "ingresses",
+			},
+		},
+		{
+			name:         "exact match - networkpolicy with version and group",
+			resourceName: "NetworkPolicy.v1.networking.k8s.io",
+			setupDiscovery: func() *cmdtesting.FakeCachedDiscoveryClient {
+				dc := cmdtesting.NewFakeCachedDiscoveryClient()
+				dc.PreferredResources = []*v1.APIResourceList{
+					{
+						GroupVersion: "networking.k8s.io/v1",
+						APIResources: []v1.APIResource{
+							{Name: "ingresses", Kind: "Ingress", Namespaced: true},
+							{Name: "networkpolicies", Kind: "NetworkPolicy", Namespaced: true},
+						},
+					},
+				}
+				return dc
+			},
+			expectedGVR: schema.GroupVersionResource{
+				Group:    "networking.k8s.io",
+				Version:  "v1",
+				Resource: "networkpolicies",
+			},
+		},
+		{
+			name:         "exact match - persistent volume claim",
+			resourceName: "PersistentVolumeClaim",
+			setupDiscovery: func() *cmdtesting.FakeCachedDiscoveryClient {
+				dc := cmdtesting.NewFakeCachedDiscoveryClient()
+				dc.PreferredResources = []*v1.APIResourceList{
+					{
+						GroupVersion: "v1",
+						APIResources: []v1.APIResource{
+							{Name: "persistentvolumeclaims", Kind: "PersistentVolumeClaim", Namespaced: true},
+							{Name: "persistentvolumes", Kind: "PersistentVolume", Namespaced: false},
+						},
+					},
+				}
+				return dc
+			},
+			expectedGVR: schema.GroupVersionResource{
+				Group:    "",
+				Version:  "v1",
+				Resource: "persistentvolumeclaims",
+			},
+		},
+		{
+			name:         "partial match - custom resource definition by resource name",
+			resourceName: "customresource",
+			setupDiscovery: func() *cmdtesting.FakeCachedDiscoveryClient {
+				dc := cmdtesting.NewFakeCachedDiscoveryClient()
+				dc.PreferredResources = []*v1.APIResourceList{
+					{
+						GroupVersion: "apiextensions.k8s.io/v1",
+						APIResources: []v1.APIResource{
+							{Name: "customresourcedefinitions", Kind: "CustomResourceDefinition", Namespaced: false},
+						},
+					},
+					{
+						GroupVersion: "v1",
+						APIResources: []v1.APIResource{
+							{Name: "pods", Kind: "Pod", Namespaced: true},
+						},
+					},
+				}
+				return dc
+			},
+			expectedGVR: schema.GroupVersionResource{
+				Group:    "apiextensions.k8s.io",
+				Version:  "v1",
+				Resource: "customresourcedefinitions",
+			},
+		},
+		{
+			name:         "multiple complex partial matches - networking resources",
+			resourceName: "net",
+			setupDiscovery: func() *cmdtesting.FakeCachedDiscoveryClient {
+				dc := cmdtesting.NewFakeCachedDiscoveryClient()
+				dc.PreferredResources = []*v1.APIResourceList{
+					{
+						GroupVersion: "networking.k8s.io/v1",
+						APIResources: []v1.APIResource{
+							{Name: "networkpolicies", Kind: "NetworkPolicy", Namespaced: true},
+							{Name: "networkattachmentdefinitions", Kind: "NetworkAttachmentDefinition", Namespaced: true},
+						},
+					},
+				}
+				return dc
+			},
+			expectedError: "resource \"net\" not found, did you mean one of these: networkpolicies.v1.networking.k8s.io, networkattachmentdefinitions.v1.networking.k8s.io",
+		},
 	}
 
 	for _, tt := range tests {
@@ -210,29 +321,31 @@ func TestFindResource(t *testing.T) {
 }
 
 func TestFindResource_ExactMatchPriority(t *testing.T) {
-	// Test that exact matches are prioritized over partial matches
+	// Test that exact matches are prioritized over partial matches with RBAC resources
 	dc := cmdtesting.NewFakeCachedDiscoveryClient()
 	dc.PreferredResources = []*v1.APIResourceList{
 		{
-			GroupVersion: "v1",
+			GroupVersion: "rbac.authorization.k8s.io/v1",
 			APIResources: []v1.APIResource{
-				{Name: "pods", Kind: "Pod", Namespaced: true},
-				{Name: "podtemplates", Kind: "PodTemplate", Namespaced: true},
+				{Name: "roles", Kind: "Role", Namespaced: true},
+				{Name: "rolebindings", Kind: "RoleBinding", Namespaced: true},
+				{Name: "clusterroles", Kind: "ClusterRole", Namespaced: false},
+				{Name: "clusterrolebindings", Kind: "ClusterRoleBinding", Namespaced: false},
 			},
 		},
 	}
 
-	// Search for "Pod" should return exact match, not partial match with "PodTemplate"
-	gvr, err := FindResource("Pod", dc, nil)
+	// Search for "Role.rbac.authorization.k8s.io" should return exact match "roles", not partial match with "RoleBinding"
+	gvr, err := FindResource("Role.rbac.authorization.k8s.io", dc, nil)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 		return
 	}
 
 	expected := schema.GroupVersionResource{
-		Group:    "",
+		Group:    "rbac.authorization.k8s.io",
 		Version:  "v1",
-		Resource: "pods",
+		Resource: "roles",
 	}
 
 	if gvr != expected {

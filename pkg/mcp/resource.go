@@ -28,7 +28,7 @@ import (
 )
 
 func FindResource(resourceName string, discoveryClient discovery.CachedDiscoveryInterface, session *mcp.ServerSession) (schema.GroupVersionResource, error) {
-	gvk, gk := schema.ParseKindArg(resourceName)
+	_, gk := schema.ParseKindArg(resourceName)
 
 	resources, err := discoveryClient.ServerPreferredResources()
 	if err != nil {
@@ -51,14 +51,8 @@ func FindResource(resourceName string, discoveryClient discovery.CachedDiscovery
 				Resource: resource.Name,
 			}
 
-			if gvk != nil {
-				if resource.Kind == gvk.Kind && gv.Group == gvk.Group && gv.Version == gvk.Version {
-					exactMatches = append(exactMatches, currentGVR)
-				}
-			} else {
-				if resource.Kind == gk.Kind && gv.Group == gk.Group {
-					exactMatches = append(exactMatches, currentGVR)
-				}
+			if resource.Kind == gk.Kind && gv.Group == gk.Group {
+				exactMatches = append(exactMatches, currentGVR)
 			}
 
 			if strings.Contains(strings.ToLower(resource.Kind), strings.ToLower(gk.Kind)) ||
