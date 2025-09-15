@@ -46,13 +46,17 @@ var (
 `
 )
 
-const DefaultPort = "8080"
+const (
+	DefaultPort     = "8080"
+	DefaultAudience = "k-mcp"
+)
 
 // KMCPOptions provides information required to run
 // MCP Server
 type KMCPOptions struct {
 	Port     string
 	LogLevel string
+	Audience string
 
 	Server *mcp.Server
 
@@ -64,6 +68,7 @@ func NewKMCPOptions(streams genericiooptions.IOStreams) *KMCPOptions {
 	return &KMCPOptions{
 		IOStreams: streams,
 		Port:      DefaultPort,
+		Audience:  DefaultAudience,
 	}
 }
 
@@ -95,6 +100,7 @@ func NewCmdKMCP(streams genericiooptions.IOStreams) *cobra.Command {
 
 	cmd.Flags().StringVar(&o.Port, "port", o.Port, "Start a streamable HTTP on the specified port. Default is 8080")
 	cmd.Flags().StringVar(&o.LogLevel, "log-level", "info", "Log level (debug, info, warn, error)")
+	cmd.Flags().StringVar(&o.Audience, "audience", o.Audience, "JWT token audience for validation. Default is k-mcp")
 
 	cmd.AddCommand(NewCmdVersion(streams))
 
@@ -128,7 +134,7 @@ func (o *KMCPOptions) Complete(cmd *cobra.Command) error {
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
 
-	o.Server = mcp.NewServer(o.Port)
+	o.Server = mcp.NewServer(o.Port, o.Audience)
 	return nil
 }
 

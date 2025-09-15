@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -27,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -34,17 +36,75 @@ import (
 )
 
 type Server struct {
-	Port string
+	Port     string
+	Audience string
 }
 
-func NewServer(port string) *Server {
+func NewServer(port string, audience string) *Server {
 	return &Server{
-		Port: port,
+		Port:     port,
+		Audience: audience,
 	}
+}
+
+// JWTClaims represents the claims in our JWT tokens.
+// In a real application, you would include additional claims like issuer, audience, etc.
+type JWTClaims struct {
+	Scopes []string `json:"scopes"`
+	jwt.RegisteredClaims
 }
 
 func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
+
+	verifyToken := func(ctx context.Context, tokenString string, _ *http.Request) (*auth.TokenInfo, error) {
+		parser := jwt.NewParser()
+		token, _, err := parser.ParseUnverified(tokenString, &JWTClaims{})
+		if err != nil {
+			return nil, fmt.Errorf("%w: failed to parse token: %v", auth.ErrInvalidToken, err)
+		}
+
+		if !token.Valid {
+			return nil, fmt.Errorf("%w: invalid token", auth.ErrInvalidToken)
+		}
+
+		claims, ok := token.Claims.(*JWTClaims)
+		if !ok {
+			return nil, fmt.Errorf("%w: invalid token claims", auth.ErrInvalidToken)
+		}
+
+		if claims.ExpiresAt == nil {
+			return nil, fmt.Errorf("%w: invalid token expired", auth.ErrInvalidToken)
+		}
+
+		if claims.ExpiresAt.Before(time.Now()) {
+			return nil, fmt.Errorf("%w: token has expired", auth.ErrInvalidToken)
+		}
+
+		if claims.NotBefore != nil && claims.NotBefore.After(time.Now()) {
+			return nil, fmt.Errorf("%w: token not yet valid", auth.ErrInvalidToken)
+		}
+
+		if claims.Audience == nil {
+			return nil, fmt.Errorf("%w: invalid token audience", auth.ErrInvalidToken)
+		}
+
+		found := false
+		for _, aud := range claims.Audience {
+			if aud == s.Audience {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("%w: token audience does not match %s", auth.ErrInvalidToken, s.Audience)
+		}
+
+		return &auth.TokenInfo{
+			Scopes:     claims.Scopes,
+			Expiration: claims.ExpiresAt.Time,
+		}, nil
+	}
 
 	loggingMiddleware := func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(
@@ -103,7 +163,7 @@ func (s *Server) Run(ctx context.Context) error {
 		Stateless: false,
 	})
 	handlerWithLogging := loggingHandler(handler)
-	handlerWithJWT := auth.RequireBearerToken(verifyJWT, nil)(handlerWithLogging)
+	handlerWithJWT := auth.RequireBearerToken(verifyToken, nil)(handlerWithLogging)
 
 	mux.Handle("/mcp", handlerWithJWT)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
