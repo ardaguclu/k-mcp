@@ -188,10 +188,15 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 
 			var resources *unstructured.UnstructuredList
 			namespace := input.Namespace
+			listOptions := v1.ListOptions{}
+			if input.LabelSelector != "" {
+				listOptions.LabelSelector = input.LabelSelector
+			}
+
 			if namespace != "" {
-				resources, err = dynamicClient.Resource(gvr).Namespace(namespace).List(context.Background(), v1.ListOptions{})
+				resources, err = dynamicClient.Resource(gvr).Namespace(namespace).List(context.Background(), listOptions)
 			} else {
-				resources, err = dynamicClient.Resource(gvr).List(context.Background(), v1.ListOptions{})
+				resources, err = dynamicClient.Resource(gvr).List(context.Background(), listOptions)
 			}
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to list resources: %w", err)
@@ -202,10 +207,18 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			}
 		}
 
+		message := fmt.Sprintf("Found %d %s resources", len(result), input.Resource)
+		if input.LabelSelector != "" {
+			message += fmt.Sprintf(" with label selector '%s'", input.LabelSelector)
+		}
+		if input.Namespace != "" {
+			message += fmt.Sprintf(" in namespace '%s'", input.Namespace)
+		}
+
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{
-					Text: fmt.Sprintf("Found %d %s resources", len(result), input.Resource),
+					Text: message,
 				},
 			},
 		}, result, nil
@@ -342,8 +355,9 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 }
 
 type ResourceListInput struct {
-	Resource  string `json:"resource" jsonschema:"required,description=The Kubernetes resource type (e.g. pods services deployments)"`
-	Namespace string `json:"namespace,omitempty" jsonschema:"description=The namespace to list resources from (optional defaults to all namespaces)"`
+	Resource      string `json:"resource" jsonschema:"required,description=The Kubernetes resource type (e.g. pods services deployments)"`
+	Namespace     string `json:"namespace,omitempty" jsonschema:"description=The namespace to list resources from (optional defaults to all namespaces)"`
+	LabelSelector string `json:"labelSelector,omitempty" jsonschema:"description=Label selector to filter resources (e.g. app=myapp,version=v1.0)"`
 }
 
 type ResourceGetInput struct {
