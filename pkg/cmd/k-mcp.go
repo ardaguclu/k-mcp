@@ -84,6 +84,8 @@ func NewCmdKMCP(streams genericiooptions.IOStreams) *cobra.Command {
 
 	cmd.Flags().StringVar(&o.Port, "port", o.Port, "Start a streamable HTTP on the specified port. Default is 8080")
 
+	cmd.AddCommand(NewCmdVersion(streams))
+
 	return cmd
 }
 
