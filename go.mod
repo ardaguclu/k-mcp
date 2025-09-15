@@ -3,6 +3,7 @@ module github.com/ardaguclu/k-mcp
 go 1.24.2
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/modelcontextprotocol/go-sdk v0.5.0
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/pflag v1.0.10

@@ -27,8 +27,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/ardaguclu/k-mcp/pkg/version"
-	mcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type Server struct {
@@ -44,19 +46,66 @@ func NewServer(port string) *Server {
 func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 
+	loggingMiddleware := func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(
+			ctx context.Context,
+			method string,
+			req mcp.Request,
+		) (mcp.Result, error) {
+			slog.Debug("MCP method started",
+				"method", method,
+				"session_id", req.GetSession().ID(),
+				"has_params", req.GetParams() != nil,
+			)
+			// Log more for tool calls.
+			if ctr, ok := req.(*mcp.CallToolRequest); ok {
+				slog.Debug("Calling tool",
+					"name", ctr.Params.Name,
+					"args", ctr.Params.Arguments)
+			}
+
+			start := time.Now()
+			result, err := next(ctx, method, req)
+			duration := time.Since(start)
+			if err != nil {
+				slog.Error("MCP method failed",
+					"method", method,
+					"session_id", req.GetSession().ID(),
+					"duration_ms", duration.Milliseconds(),
+					"err", err,
+				)
+			} else {
+				slog.Debug("MCP method completed",
+					"method", method,
+					"session_id", req.GetSession().ID(),
+					"duration_ms", duration.Milliseconds(),
+					"has_result", result != nil,
+				)
+				// Log more for tool results.
+				if ctr, ok := result.(*mcp.CallToolResult); ok {
+					slog.Debug("tool result",
+						"isError", ctr.IsError,
+						"structuredContent", ctr.StructuredContent)
+				}
+			}
+			return result, err
+		}
+	}
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "k-mcp",
 		Version: version.Get().Version,
 	}, nil)
-
+	server.AddReceivingMiddleware(loggingMiddleware)
 	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return server
-	}, nil)
-
+	}, &mcp.StreamableHTTPOptions{
+		Stateless: false,
+	})
 	handlerWithLogging := loggingHandler(handler)
-	mux.Handle("/mcp", handlerWithLogging)
+	handlerWithJWT := auth.RequireBearerToken(verifyJWT, nil)(handlerWithLogging)
 
-	// Health endpoint
+	mux.Handle("/mcp", handlerWithJWT)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		//nolint:errcheck
