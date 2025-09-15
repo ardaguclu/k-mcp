@@ -84,6 +84,14 @@ func FindResource(resourceName string, discoveryClient discovery.CachedDiscovery
 		return partialMatches[0], nil
 	}
 
+	if session == nil {
+		var options []string
+		for _, match := range partialMatches {
+			options = append(options, fmt.Sprintf("%s.%s.%s", match.Resource, match.Version, match.Group))
+		}
+		return schema.GroupVersionResource{}, fmt.Errorf("resource %q not found, did you mean one of these: %s", resourceName, strings.Join(options, ", "))
+	}
+
 	var options []string
 	for i, match := range partialMatches {
 		options = append(options, fmt.Sprintf("%d. %s.%s.%s", i+1, match.Resource, match.Version, match.Group))

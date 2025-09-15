@@ -170,7 +170,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 	}, nil)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "resource_list",
-		Description: "List Kubernetes resources of a specific type. This can be pods, deployments.v1.apps or ",
+		Description: "List Kubernetes resources of a specific type. This can be pods, deployments.v1.apps, etc. Kind.version.group format",
 	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceListInput) (*mcp.CallToolResult, any, error) {
 		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
@@ -182,7 +182,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 		if err != nil {
 			return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
 		}
-		
+
 		namespace := input.Namespace
 		var resources *unstructured.UnstructuredList
 		if namespace != "" {
@@ -193,12 +193,12 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to list resources: %w", err)
 		}
-		
+
 		var result []map[string]interface{}
 		for _, item := range resources.Items {
 			result = append(result, item.Object)
 		}
-		
+
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{
@@ -209,7 +209,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "resource_get",
-		Description: "Get detailed information about a specific Kubernetes resource",
+		Description: "Get detailed information about a specific Kubernetes resource. This can be pods, deployments.v1.apps, etc. Kind.version.group format",
 	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceGetInput) (*mcp.CallToolResult, any, error) {
 		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
@@ -221,7 +221,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 		if err != nil {
 			return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
 		}
-		
+
 		namespace := input.Namespace
 		var resource *unstructured.Unstructured
 		if namespace != "" {
@@ -232,7 +232,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to get resource: %w", err)
 		}
-		
+
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{
