@@ -174,29 +174,31 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceListInput) (*mcp.CallToolResult, any, error) {
 		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
-		dynamicClient, discoveryClient, err := dynamicConfig.LoadRestConfig(bearerToken, apiServerUrls[0])
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
-		}
-		gvr, err := FindResource(input.Resource, discoveryClient, request.Session)
-		if err != nil {
-			return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
-		}
-
-		namespace := input.Namespace
-		var resources *unstructured.UnstructuredList
-		if namespace != "" {
-			resources, err = dynamicClient.Resource(gvr).Namespace(namespace).List(context.Background(), v1.ListOptions{})
-		} else {
-			resources, err = dynamicClient.Resource(gvr).List(context.Background(), v1.ListOptions{})
-		}
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to list resources: %w", err)
-		}
-
 		var result []map[string]interface{}
-		for _, item := range resources.Items {
-			result = append(result, item.Object)
+		for _, u := range apiServerUrls {
+			dynamicClient, discoveryClient, err := dynamicConfig.LoadRestConfig(bearerToken, u)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
+			}
+			gvr, err := FindResource(input.Resource, discoveryClient, request.Session)
+			if err != nil {
+				return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
+			}
+
+			var resources *unstructured.UnstructuredList
+			namespace := input.Namespace
+			if namespace != "" {
+				resources, err = dynamicClient.Resource(gvr).Namespace(namespace).List(context.Background(), v1.ListOptions{})
+			} else {
+				resources, err = dynamicClient.Resource(gvr).List(context.Background(), v1.ListOptions{})
+			}
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to list resources: %w", err)
+			}
+
+			for _, item := range resources.Items {
+				result = append(result, item.Object)
+			}
 		}
 
 		return &mcp.CallToolResult{
@@ -213,24 +215,28 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceGetInput) (*mcp.CallToolResult, any, error) {
 		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
-		dynamicClient, discoveryClient, err := dynamicConfig.LoadRestConfig(bearerToken, apiServerUrls[0])
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
-		}
-		gvr, err := FindResource(input.Resource, discoveryClient, request.Session)
-		if err != nil {
-			return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
-		}
+		var result []map[string]interface{}
+		for _, u := range apiServerUrls {
+			dynamicClient, discoveryClient, err := dynamicConfig.LoadRestConfig(bearerToken, u)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
+			}
+			gvr, err := FindResource(input.Resource, discoveryClient, request.Session)
+			if err != nil {
+				return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
+			}
 
-		namespace := input.Namespace
-		var resource *unstructured.Unstructured
-		if namespace != "" {
-			resource, err = dynamicClient.Resource(gvr).Namespace(namespace).Get(context.Background(), input.Name, v1.GetOptions{})
-		} else {
-			resource, err = dynamicClient.Resource(gvr).Get(context.Background(), input.Name, v1.GetOptions{})
-		}
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to get resource: %w", err)
+			namespace := input.Namespace
+			var resource *unstructured.Unstructured
+			if namespace != "" {
+				resource, err = dynamicClient.Resource(gvr).Namespace(namespace).Get(context.Background(), input.Name, v1.GetOptions{})
+			} else {
+				resource, err = dynamicClient.Resource(gvr).Get(context.Background(), input.Name, v1.GetOptions{})
+			}
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to get resource: %w", err)
+			}
+			result = append(result, resource.Object)
 		}
 
 		return &mcp.CallToolResult{
@@ -239,7 +245,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 					Text: fmt.Sprintf("Retrieved %s/%s", input.Resource, input.Name),
 				},
 			},
-		}, resource.Object, nil
+		}, result, nil
 	})
 	server.AddReceivingMiddleware(loggingMiddleware)
 	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
