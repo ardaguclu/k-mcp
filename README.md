@@ -153,20 +153,11 @@ kubectl create token k-mcp-sa \
 **Examples**:
 
 ```bash
-# Example 1: Using default MCP audience "k-mcp"
 kubectl create token k-mcp-sa \
   --audience=https://127.0.0.1:6443 \
   --audience=k-mcp \
   --audience=default \
   --duration=24h
-
-# Example 2: Using custom MCP audience
-kubectl create token k-mcp-sa \
-  --audience=https://127.0.0.1:6443 \
-  --audience=my-custom-mcp \
-  --audience=default \
-  --duration=24h
-```
 
 #### 6. Start the MCP Server
 
@@ -180,9 +171,26 @@ kubectl create token k-mcp-sa \
 
 #### 7. Configure Your MCP Client
 
-Use the generated token to authenticate with the MCP server. The token should be provided as a Bearer token in the Authorization header when making requests to the MCP server endpoint.
+Use the generated token to authenticate with the MCP server. Configure your MCP client (such as Claude Desktop) by adding the server configuration to your `mcp.json` file:
 
-**Important**: If you specified a custom audience via the `--audience` flag when starting the server, ensure your token includes that exact audience as the second audience parameter.
+```json
+{
+  "mcpServers": {
+    "k-mcp": {
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer <YOUR_SERVICE_ACCOUNT_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+Replace `<YOUR_SERVICE_ACCOUNT_TOKEN>` with the token generated in step 5.
+
+**Important**:
+- If you specified a custom audience via the `--audience` flag when starting the server, ensure your token includes that exact audience as the second audience parameter.
+- This MCP server supports multiple Kubernetes clusters as long as the JWT issuer is the same and the audiences are correctly aligned in the token.
 
 ### Token Requirements Summary
 
