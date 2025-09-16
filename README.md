@@ -32,7 +32,7 @@ This repository takes a fundamentally different approach - designing an MCP serv
 - **Server-Sent Events (SSE)**: SSE support is deprecated and adds unnecessary complexity
 - **DELETE Operations**: Supporting delete operations introduces potential for unexpected issues and accidental resource removal
 
-## Available Tools
+## Available Tools (will be updated with more tools)
 
 This MCP server provides three core tools for interacting with Kubernetes clusters:
 
