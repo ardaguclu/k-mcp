@@ -31,18 +31,15 @@ import (
 )
 
 var (
-	kmcpExample = `
-	# Show the help
-	k-mcp -h
-
+	runExample = `
 	# Run MCP Server with default values
-	k-mcp
-
-	# Show the version of MCP Server
-	k-mcp version
+	k-mcp run
 
 	# Run MCP Server with custom values
-	k-mcp --port=8080
+	k-mcp run --port=8080 --log-level=debug
+
+	# Run MCP Server with TLS configuration
+	k-mcp run --certificate-authority=/path/to/ca.crt --tls-server-name=my-server
 `
 )
 
@@ -51,9 +48,9 @@ const (
 	DefaultAudience = "k-mcp"
 )
 
-// KMCPOptions provides information required to run
+// RunOptions provides information required to run
 // MCP Server
-type KMCPOptions struct {
+type RunOptions struct {
 	Port                    string
 	LogLevel                string
 	Audience                string
@@ -67,26 +64,24 @@ type KMCPOptions struct {
 	genericiooptions.IOStreams
 }
 
-// NewKMCPOptions provides an instance of KMCPOptions with default values
-func NewKMCPOptions(streams genericiooptions.IOStreams) *KMCPOptions {
-	return &KMCPOptions{
+// NewRunOptions provides an instance of RunOptions with default values
+func NewRunOptions(streams genericiooptions.IOStreams) *RunOptions {
+	return &RunOptions{
 		IOStreams: streams,
 		Port:      DefaultPort,
 		Audience:  DefaultAudience,
 	}
 }
 
-// NewCmdKMCP provides a cobra command wrapping KMCPOptions
-func NewCmdKMCP(streams genericiooptions.IOStreams) *cobra.Command {
-	o := NewKMCPOptions(streams)
+// NewCmdRun provides a cobra command wrapping RunOptions
+func NewCmdRun(streams genericiooptions.IOStreams) *cobra.Command {
+	o := NewRunOptions(streams)
 
 	cmd := &cobra.Command{
-		Use:     "k-mcp [options]",
-		Short:   "MCP Server to interact with Kubernetes Cluster",
-		Example: kmcpExample,
-		Annotations: map[string]string{
-			cobra.CommandDisplayNameAnnotation: "k-mcp",
-		},
+		Use:     "run [options]",
+		Short:   "Start the MCP server",
+		Long:    "Start the MCP server to provide Kubernetes access via Model Context Protocol",
+		Example: runExample,
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := o.Complete(c); err != nil {
 				return err
@@ -109,13 +104,11 @@ func NewCmdKMCP(streams genericiooptions.IOStreams) *cobra.Command {
 	cmd.Flags().StringVar(&o.TLSCertificateAuthority, "certificate-authority", "", "Path to a cert authority file for the certificate authority in TLS")
 	cmd.Flags().StringVar(&o.TLSServerName, "tls-server-name", o.TLSServerName, "The name of the server to use for TLS")
 
-	cmd.AddCommand(NewCmdVersion(streams))
-
 	return cmd
 }
 
 // Complete sets all information required to run the MCP server
-func (o *KMCPOptions) Complete(cmd *cobra.Command) error {
+func (o *RunOptions) Complete(cmd *cobra.Command) error {
 	_, err := strconv.Atoi(o.Port)
 	if err != nil {
 		return fmt.Errorf("invalid port number %s err: %w", o.Port, err)
@@ -143,9 +136,11 @@ func (o *KMCPOptions) Complete(cmd *cobra.Command) error {
 
 	o.Server = mcp.NewServer(o.Port, o.Audience)
 
-	_, err = os.ReadFile(o.TLSCertificateAuthority)
-	if err != nil {
-		return fmt.Errorf("failed to read CA certificate from %s: %w", o.TLSCertificateAuthority, err)
+	if o.TLSCertificateAuthority != "" {
+		_, err = os.ReadFile(o.TLSCertificateAuthority)
+		if err != nil {
+			return fmt.Errorf("failed to read CA certificate from %s: %w", o.TLSCertificateAuthority, err)
+		}
 	}
 
 	if o.TLSInsecure {
@@ -158,7 +153,7 @@ func (o *KMCPOptions) Complete(cmd *cobra.Command) error {
 }
 
 // Validate ensures that all required arguments and flag values are provided
-func (o *KMCPOptions) Validate() error {
+func (o *RunOptions) Validate() error {
 	validLevels := []string{"debug", "info", "warn", "error"}
 	for _, valid := range validLevels {
 		if strings.ToLower(o.LogLevel) == valid {
@@ -169,7 +164,7 @@ func (o *KMCPOptions) Validate() error {
 }
 
 // Run runs the MCP Server
-func (o *KMCPOptions) Run() error {
+func (o *RunOptions) Run() error {
 	ctx := context.Background()
 
 	if err := o.Server.Run(ctx, o.DynamicConfig); err != nil {

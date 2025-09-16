@@ -72,10 +72,6 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			return nil, fmt.Errorf("%w: failed to parse token: %v", auth.ErrInvalidToken, err)
 		}
 
-		if !token.Valid {
-			return nil, fmt.Errorf("%w: invalid token", auth.ErrInvalidToken)
-		}
-
 		claims, ok := token.Claims.(*JWTClaims)
 		if !ok {
 			return nil, fmt.Errorf("%w: invalid token claims", auth.ErrInvalidToken)
@@ -103,7 +99,9 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			if aud == s.Audience {
 				found = true
 			} else {
-				apiServers = append(apiServers, aud)
+				if aud != "https://kubernetes.default.svc.cluster.local" {
+					apiServers = append(apiServers, aud)
+				}
 			}
 		}
 		if !found {
@@ -187,15 +185,16 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceListInput) (*mcp.CallToolResult, any, error) {
 		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
-		var result []map[string]interface{}
+
 		for _, u := range apiServerUrls {
 			dynamicClient, discoveryClient, err := dynamicConfig.LoadRestConfig(bearerToken, u)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
 			}
+
 			gvr, _, err := FindResource(input.Resource, discoveryClient, request.Session)
 			if err != nil {
-				return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
+				continue
 			}
 
 			var resources *unstructured.UnstructuredList
@@ -214,26 +213,29 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 				return nil, nil, fmt.Errorf("failed to list resources: %w", err)
 			}
 
+			var result []map[string]interface{}
 			for _, item := range resources.Items {
 				result = append(result, item.Object)
 			}
-		}
 
-		message := fmt.Sprintf("Found %d %s resources", len(result), input.Resource)
-		if input.LabelSelector != "" {
-			message += fmt.Sprintf(" with label selector '%s'", input.LabelSelector)
-		}
-		if input.Namespace != "" {
-			message += fmt.Sprintf(" in namespace '%s'", input.Namespace)
-		}
+			message := fmt.Sprintf("Found %d %s resources", len(result), input.Resource)
+			if input.LabelSelector != "" {
+				message += fmt.Sprintf(" with label selector '%s'", input.LabelSelector)
+			}
+			if input.Namespace != "" {
+				message += fmt.Sprintf(" in namespace '%s'", input.Namespace)
+			}
 
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{
-					Text: message,
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{
+						Text: message,
+					},
 				},
-			},
-		}, result, nil
+			}, result, nil
+		}
+
+		return nil, nil, fmt.Errorf("resource %s not found on any available API servers", input.Resource)
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "resource_get",
@@ -248,15 +250,16 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceGetInput) (*mcp.CallToolResult, any, error) {
 		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
-		var result []map[string]interface{}
+
 		for _, u := range apiServerUrls {
 			dynamicClient, discoveryClient, err := dynamicConfig.LoadRestConfig(bearerToken, u)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
 			}
+
 			gvr, isNamespaced, err := FindResource(input.Resource, discoveryClient, request.Session)
 			if err != nil {
-				return nil, nil, fmt.Errorf("given resource %s not found %w", input.Resource, err)
+				continue
 			}
 
 			if isNamespaced && input.Namespace == "" {
@@ -300,16 +303,20 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to get resource: %w", err)
 			}
+
+			var result []map[string]interface{}
 			result = append(result, resource.Object)
+
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{
+						Text: fmt.Sprintf("Retrieved %s/%s", input.Resource, input.Name),
+					},
+				},
+			}, result, nil
 		}
 
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{
-					Text: fmt.Sprintf("Retrieved %s/%s", input.Resource, input.Name),
-				},
-			},
-		}, result, nil
+		return nil, nil, fmt.Errorf("resource %s not found on any available API servers", input.Resource)
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "resource_apply",
@@ -349,9 +356,6 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			return nil, nil, fmt.Errorf("no valid resources found in the provided YAML")
 		}
 
-		var appliedResources []map[string]interface{}
-		var operationSummaries []string
-
 		for _, u := range apiServerUrls {
 			dynamicClient, discoveryClient, err := dynamicConfig.LoadRestConfig(bearerToken, u)
 			if err != nil {
@@ -367,7 +371,9 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 
 			var resourceInfos []resourceInfo
 			var resourceSummaries []string
+			var validationFailed bool
 
+			// Validate all resources on this API server first
 			for _, resource := range unstructuredList {
 				kind := resource.GetKind()
 				if kind == "" {
@@ -376,7 +382,8 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 
 				gvr, isNamespaced, err := FindResource(strings.ToLower(kind), discoveryClient, request.Session)
 				if err != nil {
-					return nil, nil, fmt.Errorf("failed to find resource type %s: %w", kind, err)
+					validationFailed = true
+					break
 				}
 
 				var dynamicResource dynamic.ResourceInterface
@@ -412,6 +419,11 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 				resourceSummaries = append(resourceSummaries, fmt.Sprintf("- apply %s/%s%s", kind, resource.GetName(), nsInfo))
 			}
 
+			if validationFailed {
+				continue
+			}
+
+			// All resources validated successfully, now get user confirmation
 			resourcePreview := fmt.Sprintf(`The following resources will be processed:\n\n%s\n\nDo you want to proceed?`, strings.Join(resourceSummaries, "\n"))
 			elicitResult, err := request.Session.Elicit(context.Background(), &mcp.ElicitParams{
 				Message: resourcePreview,
@@ -451,6 +463,10 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 				}, nil, nil
 			}
 
+			// Apply all resources
+			var appliedResources []map[string]interface{}
+			var operationSummaries []string
+
 			for _, info := range resourceInfos {
 				result, err := info.dynamicResource.Apply(context.Background(), info.resource.GetName(), info.resource, v1.ApplyOptions{FieldManager: "k-mcp"})
 				if err != nil {
@@ -464,17 +480,19 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 				}
 				operationSummaries = append(operationSummaries, fmt.Sprintf("- applied %s/%s%s", result.GetKind(), result.GetName(), nsInfo))
 			}
+
+			message := fmt.Sprintf("Successfully processed %d resource(s):\n\n%s", len(appliedResources), strings.Join(operationSummaries, "\n"))
+
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{
+						Text: message,
+					},
+				},
+			}, appliedResources, nil
 		}
 
-		message := fmt.Sprintf("Successfully processed %d resource(s):\n\n%s", len(appliedResources), strings.Join(operationSummaries, "\n"))
-
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{
-					Text: message,
-				},
-			},
-		}, appliedResources, nil
+		return nil, nil, fmt.Errorf("no working API servers found for applying resources")
 	})
 	server.AddReceivingMiddleware(loggingMiddleware)
 	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
@@ -539,17 +557,17 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 }
 
 type ResourceListInput struct {
-	Resource      string `json:"resource" jsonschema:"required,description=The Kubernetes resource type (e.g. pods services deployments)"`
-	Namespace     string `json:"namespace,omitempty" jsonschema:"description=The namespace to list resources from (optional defaults to all namespaces)"`
-	LabelSelector string `json:"labelSelector,omitempty" jsonschema:"description=Label selector to filter resources (e.g. app=myapp,version=v1.0)"`
+	Resource      string `json:"resource,required" jsonschema:"The Kubernetes resource type (e.g. pods services deployments.v1.apps)"`
+	Namespace     string `json:"namespace,omitempty" jsonschema:"The namespace to list resources from (optional defaults to all namespaces)"`
+	LabelSelector string `json:"labelSelector,omitempty" jsonschema:"Label selector to filter resources (e.g. app=myapp,version=v1.0)"`
 }
 
 type ResourceGetInput struct {
-	Resource  string `json:"resource" jsonschema:"required,description=The Kubernetes resource type (e.g. pod service deployment)"`
-	Name      string `json:"name" jsonschema:"required,description=The name of the resource"`
-	Namespace string `json:"namespace,omitempty" jsonschema:"description=The namespace of the resource (required for namespaced resources)"`
+	Resource  string `json:"resource,required" jsonschema:"The Kubernetes resource type (e.g. pods services deployments.v1.apps)"`
+	Name      string `json:"name,required" jsonschema:"The name of the resource"`
+	Namespace string `json:"namespace,omitempty" jsonschema:"The namespace of the resource (required for namespaced resources)"`
 }
 
 type ResourceCreateOrUpdateInput struct {
-	ResourceYAML string `json:"resourceYAML" jsonschema:"required,description=The Kubernetes resource(s) in YAML format. Can contain single or multiple resources separated by ---"`
+	ResourceYAML string `json:"resourceYAML,required" jsonschema:"The Kubernetes resource(s) in YAML format. Can contain single or multiple resources separated by ---"`
 }

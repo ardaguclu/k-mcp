@@ -30,7 +30,7 @@ func main() {
 	flags := pflag.NewFlagSet("k-mcp", pflag.ExitOnError)
 	pflag.CommandLine = flags
 
-	root := cmd.NewCmdKMCP(genericiooptions.IOStreams{In: os.Stdin, Out: os.Stdout, ErrOut: os.Stderr})
+	root := cmd.NewCmdRoot(genericiooptions.IOStreams{In: os.Stdin, Out: os.Stdout, ErrOut: os.Stderr})
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
