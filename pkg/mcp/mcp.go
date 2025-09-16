@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,6 +35,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/utils/ptr"
 
 	"github.com/ardaguclu/k-mcp/pkg/version"
 )
@@ -170,8 +175,15 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 		Version: version.Get().Version,
 	}, nil)
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "resource_list",
-		Description: "List Kubernetes resources of a specific type. This can be pods, deployments.v1.apps, etc. Kind.version.group format",
+		Name: "resource_list",
+		Annotations: &mcp.ToolAnnotations{
+			DestructiveHint: ptr.To(false),
+			IdempotentHint:  false,
+			OpenWorldHint:   ptr.To(true),
+			ReadOnlyHint:    true,
+			Title:           "List Kubernetes resources of a specific type",
+		},
+		Description: "List Kubernetes resources of a specific type. This can be pods, deployments.v1.apps, etc. Kind.version.group or Kind format",
 	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceListInput) (*mcp.CallToolResult, any, error) {
 		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
@@ -224,8 +236,15 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 		}, result, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "resource_get",
-		Description: "Get detailed information about a specific Kubernetes resource. This can be pods, deployments.v1.apps, etc. Kind.version.group format",
+		Name: "resource_get",
+		Annotations: &mcp.ToolAnnotations{
+			DestructiveHint: ptr.To(false),
+			IdempotentHint:  false,
+			OpenWorldHint:   ptr.To(true),
+			ReadOnlyHint:    true,
+			Title:           "Get detailed information about a specific Kubernetes resource",
+		},
+		Description: "Get detailed information about a specific Kubernetes resource. This can be pods, deployments.v1.apps, etc. Kind.version.group or Kind format",
 	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceGetInput) (*mcp.CallToolResult, any, error) {
 		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
@@ -291,6 +310,171 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 				},
 			},
 		}, result, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "resource_apply",
+		Annotations: &mcp.ToolAnnotations{
+			DestructiveHint: ptr.To(true),
+			IdempotentHint:  true,
+			OpenWorldHint:   ptr.To(true),
+			ReadOnlyHint:    false,
+			Title:           "Apply a specific Kubernetes resource",
+		},
+		Description: "Apply a specific Kubernetes resource. This can be pods, deployments.v1.apps, etc. Kind.version.group or Kind format",
+	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceCreateOrUpdateInput) (*mcp.CallToolResult, any, error) {
+		apiServerUrls := request.Extra.TokenInfo.Extra["audience"].([]string)
+		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
+
+		docs := strings.Split(input.ResourceYAML, "---")
+		var unstructuredList []*unstructured.Unstructured
+
+		for _, doc := range docs {
+			doc = strings.TrimSpace(doc)
+			if doc == "" {
+				continue
+			}
+
+			decoder := yaml.NewYAMLOrJSONDecoder(strings.NewReader(doc), 4096)
+			var obj unstructured.Unstructured
+			if err := decoder.Decode(&obj); err != nil {
+				return nil, nil, fmt.Errorf("failed to decode YAML document: %w", err)
+			}
+
+			if obj.Object != nil {
+				unstructuredList = append(unstructuredList, &obj)
+			}
+		}
+
+		if len(unstructuredList) == 0 {
+			return nil, nil, fmt.Errorf("no valid resources found in the provided YAML")
+		}
+
+		var appliedResources []map[string]interface{}
+		var operationSummaries []string
+
+		for _, u := range apiServerUrls {
+			dynamicClient, discoveryClient, err := dynamicConfig.LoadRestConfig(bearerToken, u)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
+			}
+
+			type resourceInfo struct {
+				resource        *unstructured.Unstructured
+				gvr             schema.GroupVersionResource
+				isNamespaced    bool
+				dynamicResource dynamic.ResourceInterface
+			}
+
+			var resourceInfos []resourceInfo
+			var resourceSummaries []string
+
+			for _, resource := range unstructuredList {
+				kind := resource.GetKind()
+				if kind == "" {
+					return nil, nil, fmt.Errorf("resource kind is required")
+				}
+
+				gvr, isNamespaced, err := FindResource(strings.ToLower(kind), discoveryClient, request.Session)
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to find resource type %s: %w", kind, err)
+				}
+
+				var dynamicResource dynamic.ResourceInterface
+				namespace := resource.GetNamespace()
+
+				if isNamespaced {
+					if namespace == "" {
+						namespace = "default"
+						resource.SetNamespace(namespace)
+					}
+					dynamicResource = dynamicClient.Resource(gvr).Namespace(namespace)
+				} else {
+					dynamicResource = dynamicClient.Resource(gvr)
+				}
+
+				dryRunResource := resource.DeepCopy()
+				_, err = dynamicResource.Apply(context.Background(), resource.GetName(), dryRunResource, v1.ApplyOptions{DryRun: []string{v1.DryRunAll}, FieldManager: "k-mcp"})
+				if err != nil {
+					return nil, nil, fmt.Errorf("dry-run validation failed for %s/%s: %w", kind, resource.GetName(), err)
+				}
+
+				resourceInfos = append(resourceInfos, resourceInfo{
+					resource:        resource,
+					gvr:             gvr,
+					isNamespaced:    isNamespaced,
+					dynamicResource: dynamicResource,
+				})
+
+				nsInfo := ""
+				if isNamespaced {
+					nsInfo = fmt.Sprintf(" (namespace: %s)", namespace)
+				}
+				resourceSummaries = append(resourceSummaries, fmt.Sprintf("- apply %s/%s%s", kind, resource.GetName(), nsInfo))
+			}
+
+			resourcePreview := fmt.Sprintf(`The following resources will be processed:\n\n%s\n\nDo you want to proceed?`, strings.Join(resourceSummaries, "\n"))
+			elicitResult, err := request.Session.Elicit(context.Background(), &mcp.ElicitParams{
+				Message: resourcePreview,
+				RequestedSchema: &jsonschema.Schema{
+					Type: "object",
+					Properties: map[string]*jsonschema.Schema{
+						"confirm": {
+							Type:        "boolean",
+							Description: "Confirm whether to proceed with creating/updating the resources",
+						},
+					},
+					Required: []string{"confirm"},
+				},
+			})
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to elicit user confirmation: %w", err)
+			}
+
+			if elicitResult.Action != "accept" {
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{
+						&mcp.TextContent{
+							Text: "Operation cancelled by user",
+						},
+					},
+				}, nil, nil
+			}
+
+			confirm, ok := elicitResult.Content["confirm"].(bool)
+			if !ok || !confirm {
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{
+						&mcp.TextContent{
+							Text: "Operation cancelled - user did not confirm",
+						},
+					},
+				}, nil, nil
+			}
+
+			for _, info := range resourceInfos {
+				result, err := info.dynamicResource.Apply(context.Background(), info.resource.GetName(), info.resource, v1.ApplyOptions{FieldManager: "k-mcp"})
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to apply %s/%s: %w", info.resource.GetKind(), info.resource.GetName(), err)
+				}
+
+				appliedResources = append(appliedResources, result.Object)
+				nsInfo := ""
+				if info.isNamespaced {
+					nsInfo = fmt.Sprintf(" (namespace: %s)", result.GetNamespace())
+				}
+				operationSummaries = append(operationSummaries, fmt.Sprintf("- applied %s/%s%s", result.GetKind(), result.GetName(), nsInfo))
+			}
+		}
+
+		message := fmt.Sprintf("Successfully processed %d resource(s):\n\n%s", len(appliedResources), strings.Join(operationSummaries, "\n"))
+
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{
+					Text: message,
+				},
+			},
+		}, appliedResources, nil
 	})
 	server.AddReceivingMiddleware(loggingMiddleware)
 	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
@@ -364,4 +548,8 @@ type ResourceGetInput struct {
 	Resource  string `json:"resource" jsonschema:"required,description=The Kubernetes resource type (e.g. pod service deployment)"`
 	Name      string `json:"name" jsonschema:"required,description=The name of the resource"`
 	Namespace string `json:"namespace,omitempty" jsonschema:"description=The namespace of the resource (required for namespaced resources)"`
+}
+
+type ResourceCreateOrUpdateInput struct {
+	ResourceYAML string `json:"resourceYAML" jsonschema:"required,description=The Kubernetes resource(s) in YAML format. Can contain single or multiple resources separated by ---"`
 }

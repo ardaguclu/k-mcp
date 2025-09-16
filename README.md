@@ -1,12 +1,10 @@
 # k-mcp
 MCP Server to interact with Kubernetes Cluster
 
-> [!WARNING]  
-> This is currently experimental. If you are seeking something production ready, please have a look at https://github.com/containers/kubernetes-mcp-server
-
 ## About
 
-This project is inspired by and built upon the excellent work of [kubernetes-mcp-server](https://github.com/containers/kubernetes-mcp-server). We admire their approach and this repository reflects my personal vision based on their foundation.
+This project is inspired by and built upon the excellent work of [kubernetes-mcp-server](https://github.com/containers/kubernetes-mcp-server).
+We admire their approach; however, this repository seeks to provide an alternative solution to eliminate certain pain points
 
 ### Key Differences
 
@@ -20,7 +18,7 @@ This project is inspired by and built upon the excellent work of [kubernetes-mcp
 
 ### Motivation
 
-Traditional MCP servers mirror kubectl's interactive patterns with a 1:1 mapping of function calls. For example, troubleshooting a failing application requires multiple separate calls: first list pods, then get logs for specific pods, then describe those pods for additional details. 
+Current MCP servers mirror kubectl's interactive patterns with a 1:1 mapping of function calls. For example, troubleshooting a failing application requires multiple separate calls: first list pods, then get logs for specific pods, then describe those pods for additional details. 
 While this step-by-step approach works well for human operators using CLI tools, it creates inefficient back-and-forth communication when working with AI agents.
 
 AI agents excel when they can gather comprehensive context in fewer operations. Instead of multiple granular calls, they benefit from intelligent tool functions that automatically collect related datasets and return complete information in a single response.
@@ -34,14 +32,40 @@ This repository takes a fundamentally different approach - designing an MCP serv
 - **Server-Sent Events (SSE)**: SSE support is deprecated and adds unnecessary complexity
 - **DELETE Operations**: Supporting delete operations introduces potential for unexpected issues and accidental resource removal
 
-### What We Gain
-- **Zero Credential Storage**: No kubeconfig means zero risk of credential exposure and no sensitive data storage
-- **JWT Token Simplicity**: Fully relying on JWT tokens provides multi-cluster support for free without complex authentication management
-- **AI-Optimized Tool Calls**: Provides a few comprehensive tool calls that automatically collect sets of related data and return it in one operation, preventing back-and-forth communication ideal for generative AI workflows
-- **HTTP Focus**: Streamable HTTP-only approach simplifies deployment and client integration
-- **Safety First**: No delete operations prevent accidental resource removal
-- **Multi-Cluster Ready**: Token-based authentication naturally supports multiple Kubernetes clusters
-- **Reduced Attack Surface**: Fewer features and no credential storage mean significantly fewer potential security vulnerabilities
+## Available Tools
+
+This MCP server provides three core tools for interacting with Kubernetes clusters:
+
+### resource_list
+Lists Kubernetes resources of a specific type. Supports filtering by namespace and label selectors.
+- **Parameters**: resource type (required), namespace (optional), label selector (optional)
+- **Example**: List all pods in the default namespace with specific labels
+- **Read-only operation** with no side effects
+
+### resource_get
+Retrieves detailed information about a specific Kubernetes resource.
+- **Parameters**: resource type (required), resource name (required), namespace (optional for namespaced resources)
+- **Example**: Get detailed information about a specific deployment
+- **Read-only operation** with no side effects
+
+### resource_apply
+Applies Kubernetes resources using server-side apply. Supports both single resources and multiple resources separated by `---`.
+- **Parameters**: resource YAML (required)
+- **Features**: Dry-run validation, user confirmation prompts, multi-document YAML support
+- **Destructive operation** that can modify cluster state
+
+All tools support multiple API servers through JWT token-based authentication and provide comprehensive error handling with user-friendly messages. The server uses Kubernetes discovery APIs to dynamically access all live resources in the cluster, eliminating the need for pre-configured resource definitions.
+
+## Security Restrictions
+
+To improve security posture, this MCP server opinionatedly restricts access to certain sensitive Kubernetes resources:
+
+### Restricted Resources
+- **Secrets** (`secrets.v1`): Contains sensitive data like passwords, tokens, and certificates
+- **Service Accounts** (`serviceaccounts.v1`): Manages authentication tokens and cluster access credentials
+- **All RBAC Resources** (`*.rbac.authorization.k8s.io`): Includes roles, rolebindings, clusterroles, and clusterrolebindings that control cluster permissions
+
+These resources are completely filtered out during discovery and will not appear in resource listings or be accessible through any MCP tools. Attempts to access them will result in "resource not found" errors.
 
 ---
 

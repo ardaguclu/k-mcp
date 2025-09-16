@@ -27,6 +27,23 @@ import (
 	"k8s.io/client-go/discovery"
 )
 
+// isRestrictedResource checks if a resource is restricted
+func isRestrictedResource(gvr schema.GroupVersionResource) bool {
+	if gvr.Group == "rbac.authorization.k8s.io" {
+		return true
+	}
+
+	if gvr.Group == "" {
+		restrictedCoreResources := map[string]bool{
+			"serviceaccounts": true,
+			"secrets":         true,
+		}
+		return restrictedCoreResources[gvr.Resource]
+	}
+
+	return false
+}
+
 func FindResource(resourceName string, discoveryClient discovery.CachedDiscoveryInterface, session *mcp.ServerSession) (schema.GroupVersionResource, bool, error) {
 	_, gk := schema.ParseKindArg(resourceName)
 
@@ -57,6 +74,10 @@ func FindResource(resourceName string, discoveryClient discovery.CachedDiscovery
 					Resource: resource.Name,
 				},
 				namespaced: resource.Namespaced,
+			}
+
+			if isRestrictedResource(currentMatch.gvr) {
+				continue
 			}
 
 			if resource.Kind == gk.Kind && gv.Group == gk.Group {

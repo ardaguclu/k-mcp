@@ -289,13 +289,85 @@ func TestFindResource(t *testing.T) {
 			},
 			expectedError: "resource \"net\" not found, did you mean one of these: networkpolicies.v1.networking.k8s.io, networkattachmentdefinitions.v1.networking.k8s.io",
 		},
+		{
+			name:         "restricted resource - serviceaccount",
+			resourceName: "ServiceAccount",
+			setupDiscovery: func() *cmdtesting.FakeCachedDiscoveryClient {
+				dc := cmdtesting.NewFakeCachedDiscoveryClient()
+				dc.PreferredResources = []*v1.APIResourceList{
+					{
+						GroupVersion: "v1",
+						APIResources: []v1.APIResource{
+							{Name: "serviceaccounts", Kind: "ServiceAccount", Namespaced: true},
+							{Name: "pods", Kind: "Pod", Namespaced: true},
+						},
+					},
+				}
+				return dc
+			},
+			expectedError: "resource \"ServiceAccount\" not found",
+		},
+		{
+			name:         "restricted resource - secret",
+			resourceName: "Secret",
+			setupDiscovery: func() *cmdtesting.FakeCachedDiscoveryClient {
+				dc := cmdtesting.NewFakeCachedDiscoveryClient()
+				dc.PreferredResources = []*v1.APIResourceList{
+					{
+						GroupVersion: "v1",
+						APIResources: []v1.APIResource{
+							{Name: "secrets", Kind: "Secret", Namespaced: true},
+							{Name: "pods", Kind: "Pod", Namespaced: true},
+						},
+					},
+				}
+				return dc
+			},
+			expectedError: "resource \"Secret\" not found",
+		},
+		{
+			name:         "restricted resource - rbac role",
+			resourceName: "Role.rbac.authorization.k8s.io",
+			setupDiscovery: func() *cmdtesting.FakeCachedDiscoveryClient {
+				dc := cmdtesting.NewFakeCachedDiscoveryClient()
+				dc.PreferredResources = []*v1.APIResourceList{
+					{
+						GroupVersion: "rbac.authorization.k8s.io/v1",
+						APIResources: []v1.APIResource{
+							{Name: "roles", Kind: "Role", Namespaced: true},
+							{Name: "rolebindings", Kind: "RoleBinding", Namespaced: true},
+						},
+					},
+				}
+				return dc
+			},
+			expectedError: "resource \"Role.rbac.authorization.k8s.io\" not found",
+		},
+		{
+			name:         "restricted resource - rbac clusterrole",
+			resourceName: "ClusterRole.rbac.authorization.k8s.io",
+			setupDiscovery: func() *cmdtesting.FakeCachedDiscoveryClient {
+				dc := cmdtesting.NewFakeCachedDiscoveryClient()
+				dc.PreferredResources = []*v1.APIResourceList{
+					{
+						GroupVersion: "rbac.authorization.k8s.io/v1",
+						APIResources: []v1.APIResource{
+							{Name: "clusterroles", Kind: "ClusterRole", Namespaced: false},
+							{Name: "clusterrolebindings", Kind: "ClusterRoleBinding", Namespaced: false},
+						},
+					},
+				}
+				return dc
+			},
+			expectedError: "resource \"ClusterRole.rbac.authorization.k8s.io\" not found",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			discoveryClient := tt.setupDiscovery()
 
-			gvr, err := FindResource(tt.resourceName, discoveryClient, nil)
+			gvr, _, err := FindResource(tt.resourceName, discoveryClient, nil)
 
 			if tt.expectedError != "" {
 				if err == nil {
@@ -321,31 +393,29 @@ func TestFindResource(t *testing.T) {
 }
 
 func TestFindResource_ExactMatchPriority(t *testing.T) {
-	// Test that exact matches are prioritized over partial matches with RBAC resources
+	// Test that exact matches are prioritized over partial matches with non-restricted resources
 	dc := cmdtesting.NewFakeCachedDiscoveryClient()
 	dc.PreferredResources = []*v1.APIResourceList{
 		{
-			GroupVersion: "rbac.authorization.k8s.io/v1",
+			GroupVersion: "apps/v1",
 			APIResources: []v1.APIResource{
-				{Name: "roles", Kind: "Role", Namespaced: true},
-				{Name: "rolebindings", Kind: "RoleBinding", Namespaced: true},
-				{Name: "clusterroles", Kind: "ClusterRole", Namespaced: false},
-				{Name: "clusterrolebindings", Kind: "ClusterRoleBinding", Namespaced: false},
+				{Name: "deployments", Kind: "Deployment", Namespaced: true},
+				{Name: "replicasets", Kind: "ReplicaSet", Namespaced: true},
 			},
 		},
 	}
 
-	// Search for "Role.rbac.authorization.k8s.io" should return exact match "roles", not partial match with "RoleBinding"
-	gvr, err := FindResource("Role.rbac.authorization.k8s.io", dc, nil)
+	// Search for "Deployment.apps" should return exact match "deployments", not partial match with "ReplicaSet"
+	gvr, _, err := FindResource("Deployment.apps", dc, nil)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 		return
 	}
 
 	expected := schema.GroupVersionResource{
-		Group:    "rbac.authorization.k8s.io",
+		Group:    "apps",
 		Version:  "v1",
-		Resource: "roles",
+		Resource: "deployments",
 	}
 
 	if gvr != expected {
@@ -371,7 +441,7 @@ func TestFindResource_MultipleExactMatches(t *testing.T) {
 		},
 	}
 
-	gvr, err := FindResource("Pod", dc, nil)
+	gvr, _, err := FindResource("Pod", dc, nil)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 		return
@@ -385,5 +455,77 @@ func TestFindResource_MultipleExactMatches(t *testing.T) {
 
 	if gvr != expected {
 		t.Errorf("expected first match %+v, got %+v", expected, gvr)
+	}
+}
+
+func TestIsRestrictedResource(t *testing.T) {
+	tests := []struct {
+		name         string
+		gvr          schema.GroupVersionResource
+		isRestricted bool
+	}{
+		{
+			name: "serviceaccounts in core v1 - restricted",
+			gvr: schema.GroupVersionResource{
+				Group:    "",
+				Version:  "v1",
+				Resource: "serviceaccounts",
+			},
+			isRestricted: true,
+		},
+		{
+			name: "secrets in core v1 - restricted",
+			gvr: schema.GroupVersionResource{
+				Group:    "",
+				Version:  "v1",
+				Resource: "secrets",
+			},
+			isRestricted: true,
+		},
+		{
+			name: "pods in core v1 - not restricted",
+			gvr: schema.GroupVersionResource{
+				Group:    "",
+				Version:  "v1",
+				Resource: "pods",
+			},
+			isRestricted: false,
+		},
+		{
+			name: "roles in rbac group - restricted",
+			gvr: schema.GroupVersionResource{
+				Group:    "rbac.authorization.k8s.io",
+				Version:  "v1",
+				Resource: "roles",
+			},
+			isRestricted: true,
+		},
+		{
+			name: "clusterroles in rbac group - restricted",
+			gvr: schema.GroupVersionResource{
+				Group:    "rbac.authorization.k8s.io",
+				Version:  "v1",
+				Resource: "clusterroles",
+			},
+			isRestricted: true,
+		},
+		{
+			name: "deployments in apps group - not restricted",
+			gvr: schema.GroupVersionResource{
+				Group:    "apps",
+				Version:  "v1",
+				Resource: "deployments",
+			},
+			isRestricted: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isRestrictedResource(tt.gvr)
+			if result != tt.isRestricted {
+				t.Errorf("expected isRestrictedResource(%+v) = %v, got %v", tt.gvr, tt.isRestricted, result)
+			}
+		})
 	}
 }
