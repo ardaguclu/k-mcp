@@ -44,7 +44,7 @@ func isRestrictedResource(gvr schema.GroupVersionResource) bool {
 	return false
 }
 
-func FindResource(resourceName string, discoveryClient discovery.CachedDiscoveryInterface, session *mcp.ServerSession) (schema.GroupVersionResource, bool, error) {
+func FindResource(ctx context.Context, resourceName string, discoveryClient discovery.CachedDiscoveryInterface, session *mcp.ServerSession) (schema.GroupVersionResource, bool, error) {
 	_, gk := schema.ParseKindArg(resourceName)
 
 	resources, err := discoveryClient.ServerPreferredResources()
@@ -123,7 +123,7 @@ func FindResource(resourceName string, discoveryClient discovery.CachedDiscovery
 
 	optionsText := "Did you mean one of these?\n" + strings.Join(options, "\n")
 
-	elicitResult, err := session.Elicit(context.Background(), &mcp.ElicitParams{
+	elicitResult, err := session.Elicit(ctx, &mcp.ElicitParams{
 		Message: fmt.Sprintf("Resource '%s' not found. %s", resourceName, optionsText),
 	})
 	if err != nil {

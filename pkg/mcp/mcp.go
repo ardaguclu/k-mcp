@@ -182,7 +182,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			Title:           "List Kubernetes resources of a specific type",
 		},
 		Description: "List Kubernetes resources of a specific type. This can be pods, deployments.v1.apps, etc. Kind.version.group or Kind format",
-	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceListInput) (*mcp.CallToolResult, *ResourceListResult, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input ResourceListInput) (*mcp.CallToolResult, *ResourceListResult, error) {
 		apiServerUrl := request.Extra.TokenInfo.Extra["audience"].(string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
 
@@ -191,7 +191,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
 		}
 
-		gvr, _, err := FindResource(input.Resource, discoveryClient, request.Session)
+		gvr, _, err := FindResource(ctx, input.Resource, discoveryClient, request.Session)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to find resource: %w", err)
 		}
@@ -203,9 +203,9 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 		}
 
 		if namespace != "" {
-			resources, err = dynamicClient.Resource(gvr).Namespace(namespace).List(context.Background(), listOptions)
+			resources, err = dynamicClient.Resource(gvr).Namespace(namespace).List(ctx, listOptions)
 		} else {
-			resources, err = dynamicClient.Resource(gvr).List(context.Background(), listOptions)
+			resources, err = dynamicClient.Resource(gvr).List(ctx, listOptions)
 		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to list resources: %w", err)
@@ -242,7 +242,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			Title:           "Get detailed information about a specific Kubernetes resource",
 		},
 		Description: "Get detailed information about a specific Kubernetes resource. This can be pods, deployments.v1.apps, etc. Kind.version.group or Kind format",
-	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceGetInput) (*mcp.CallToolResult, *ResourceGetResult, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input ResourceGetInput) (*mcp.CallToolResult, *ResourceGetResult, error) {
 		apiServerUrl := request.Extra.TokenInfo.Extra["audience"].(string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
 
@@ -251,14 +251,14 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			return nil, nil, fmt.Errorf("failed to load dynamic client: %w", err)
 		}
 
-		gvr, isNamespaced, err := FindResource(input.Resource, discoveryClient, request.Session)
+		gvr, isNamespaced, err := FindResource(ctx, input.Resource, discoveryClient, request.Session)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to find resource: %w", err)
 		}
 
 		if isNamespaced && input.Namespace == "" {
 			defaultValue := json.RawMessage(`"default"`)
-			elicitResult, err := request.Session.Elicit(context.Background(), &mcp.ElicitParams{
+			elicitResult, err := request.Session.Elicit(ctx, &mcp.ElicitParams{
 				Message: fmt.Sprintf("Namespace is required for namespaced resource %s. Please specify a namespace:", input.Resource),
 				RequestedSchema: &jsonschema.Schema{
 					Type: "object",
@@ -290,9 +290,9 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 		namespace := input.Namespace
 		var resource *unstructured.Unstructured
 		if namespace != "" {
-			resource, err = dynamicClient.Resource(gvr).Namespace(namespace).Get(context.Background(), input.Name, v1.GetOptions{})
+			resource, err = dynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, input.Name, v1.GetOptions{})
 		} else {
-			resource, err = dynamicClient.Resource(gvr).Get(context.Background(), input.Name, v1.GetOptions{})
+			resource, err = dynamicClient.Resource(gvr).Get(ctx, input.Name, v1.GetOptions{})
 		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to get resource: %w", err)
@@ -316,7 +316,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			Title:           "Apply a specific Kubernetes resource",
 		},
 		Description: "Apply a specific Kubernetes resource. This can be pods, deployments.v1.apps, etc. Kind.version.group or Kind format",
-	}, func(_ context.Context, request *mcp.CallToolRequest, input ResourceCreateOrUpdateInput) (*mcp.CallToolResult, *ResourceApplyResult, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input ResourceCreateOrUpdateInput) (*mcp.CallToolResult, *ResourceApplyResult, error) {
 		apiServerUrl := request.Extra.TokenInfo.Extra["audience"].(string)
 		bearerToken := request.Extra.TokenInfo.Extra["bearer_token"].(string)
 
@@ -365,7 +365,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 				return nil, nil, fmt.Errorf("resource kind is required")
 			}
 
-			gvr, isNamespaced, err := FindResource(strings.ToLower(kind), discoveryClient, request.Session)
+			gvr, isNamespaced, err := FindResource(ctx, strings.ToLower(kind), discoveryClient, request.Session)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to find resource: %w", err)
 			}
@@ -384,7 +384,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			}
 
 			dryRunResource := resource.DeepCopy()
-			_, err = dynamicResource.Apply(context.Background(), resource.GetName(), dryRunResource, v1.ApplyOptions{DryRun: []string{v1.DryRunAll}, FieldManager: "k-mcp"})
+			_, err = dynamicResource.Apply(ctx, resource.GetName(), dryRunResource, v1.ApplyOptions{DryRun: []string{v1.DryRunAll}, FieldManager: "k-mcp"})
 			if err != nil {
 				return nil, nil, fmt.Errorf("dry-run validation failed for %s/%s: %w", kind, resource.GetName(), err)
 			}
@@ -406,7 +406,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 		// All resources validated successfully, now get user confirmation
 
 		resourcePreview := fmt.Sprintf(`The following resources will be processed:\n\n%s\n\nDo you want to proceed?`, strings.Join(resourceSummaries, "\n"))
-		elicitResult, err := request.Session.Elicit(context.Background(), &mcp.ElicitParams{
+		elicitResult, err := request.Session.Elicit(ctx, &mcp.ElicitParams{
 			Message: resourcePreview,
 			RequestedSchema: &jsonschema.Schema{
 				Type: "object",
@@ -444,12 +444,11 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			}, nil, nil
 		}
 
-		// Apply all resources
 		var appliedResources []map[string]interface{}
 		var operationSummaries []string
 
 		for _, info := range resourceInfos {
-			result, err := info.dynamicResource.Apply(context.Background(), info.resource.GetName(), info.resource, v1.ApplyOptions{FieldManager: "k-mcp"})
+			result, err := info.dynamicResource.Apply(ctx, info.resource.GetName(), info.resource, v1.ApplyOptions{FieldManager: "k-mcp"})
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to apply %s/%s: %w", info.resource.GetKind(), info.resource.GetName(), err)
 			}
