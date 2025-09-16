@@ -17,6 +17,7 @@ limitations under the License.
 package mcp
 
 import (
+	"context"
 	"testing"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -367,7 +368,7 @@ func TestFindResource(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			discoveryClient := tt.setupDiscovery()
 
-			gvr, _, err := FindResource(tt.resourceName, discoveryClient, nil)
+			gvr, _, err := FindResource(context.TODO(), tt.resourceName, discoveryClient, nil)
 
 			if tt.expectedError != "" {
 				if err == nil {
@@ -406,7 +407,7 @@ func TestFindResource_ExactMatchPriority(t *testing.T) {
 	}
 
 	// Search for "Deployment.apps" should return exact match "deployments", not partial match with "ReplicaSet"
-	gvr, _, err := FindResource("Deployment.apps", dc, nil)
+	gvr, _, err := FindResource(context.TODO(), "Deployment.apps", dc, nil)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 		return
@@ -441,7 +442,7 @@ func TestFindResource_MultipleExactMatches(t *testing.T) {
 		},
 	}
 
-	gvr, _, err := FindResource("Pod", dc, nil)
+	gvr, _, err := FindResource(context.TODO(), "Pod", dc, nil)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 		return

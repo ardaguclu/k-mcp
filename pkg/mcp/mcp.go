@@ -403,8 +403,6 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			resourceSummaries = append(resourceSummaries, fmt.Sprintf("- apply %s/%s%s", kind, resource.GetName(), nsInfo))
 		}
 
-		// All resources validated successfully, now get user confirmation
-
 		resourcePreview := fmt.Sprintf(`The following resources will be processed:\n\n%s\n\nDo you want to proceed?`, strings.Join(resourceSummaries, "\n"))
 		elicitResult, err := request.Session.Elicit(ctx, &mcp.ElicitParams{
 			Message: resourcePreview,
