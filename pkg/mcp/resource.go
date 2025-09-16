@@ -80,8 +80,10 @@ func FindResource(resourceName string, discoveryClient discovery.CachedDiscovery
 				continue
 			}
 
-			if resource.Kind == gk.Kind && gv.Group == gk.Group {
-				exactMatches = append(exactMatches, currentMatch)
+			if gv.Group == gk.Group {
+				if strings.EqualFold(resource.Kind, gk.Kind) || strings.EqualFold(resource.SingularName, gk.Kind) || strings.EqualFold(resource.Name, gk.Kind) {
+					exactMatches = append(exactMatches, currentMatch)
+				}
 			}
 
 			if strings.Contains(strings.ToLower(resource.Kind), strings.ToLower(gk.Kind)) ||
