@@ -67,6 +67,140 @@ To improve security posture, this MCP server opinionatedly restricts access to c
 
 These resources are completely filtered out during discovery and will not appear in resource listings or be accessible through any MCP tools. Attempts to access them will result in "resource not found" errors.
 
+## Setup and Usage
+
+### Prerequisites
+
+- [Kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) for local Kubernetes development
+- `kubectl` CLI tool
+
+### Step-by-Step Setup
+
+#### 1. Create a Kind Cluster
+
+```bash
+kind create cluster --name k-mcp-demo
+kubectl cluster-info --context kind-k-mcp-demo
+```
+
+#### 2. Export Cluster Certificate Authority
+
+Kind clusters generate their own certificate authority. Extract it to a file for the MCP server:
+
+```bash
+kubectl config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > ca.cert
+```
+
+#### 3. Create a Service Account
+
+```bash
+kubectl create serviceaccount k-mcp-sa
+```
+
+#### 4. Grant Necessary Permissions
+
+Create appropriate RBAC permissions for the service account:
+
+```bash
+# Create ClusterRole with necessary permissions
+kubectl create clusterrole k-mcp-role \
+  --verb=get,list,watch,create,update,patch,apply \
+  --resource=*
+
+# Bind the ClusterRole to the service account
+kubectl create clusterrolebinding k-mcp-binding \
+  --clusterrole=k-mcp-role \
+  --serviceaccount=default:k-mcp-sa
+```
+
+**Note**: Adjust the permissions based on your security requirements. For production use, consider using more restrictive permissions.
+
+#### 5. Generate Service Account Token
+
+The k-mcp server requires JWT tokens with specific audience configuration. The token **must** include three audiences in this order:
+1. **First audience**: Your Kubernetes API server URL
+2. **Second audience**: The MCP server audience (default: "k-mcp", or custom value set via `--audience` flag)
+3. **Third audience**: The default audience (can be checked via `kubectl create token default`)
+
+##### Get Your API Server URL
+
+```bash
+kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}'
+```
+
+##### Check Default Audience
+
+```bash
+kubectl create token default
+```
+
+This will show you the default audience format used by your cluster.
+
+##### Create Token with Correct Audiences
+
+```bash
+# Replace <API_SERVER_URL> with your actual API server URL
+# Replace <MCP_AUDIENCE> with your MCP server audience (default: "k-mcp")
+# Replace <DEFAULT_AUDIENCE> with your cluster's default audience
+
+kubectl create token k-mcp-sa \
+  --audience=<API_SERVER_URL> \
+  --audience=<MCP_AUDIENCE> \
+  --audience=<DEFAULT_AUDIENCE> \
+  --duration=24h
+```
+
+**Examples**:
+
+```bash
+# Example 1: Using default MCP audience "k-mcp"
+kubectl create token k-mcp-sa \
+  --audience=https://127.0.0.1:6443 \
+  --audience=k-mcp \
+  --audience=default \
+  --duration=24h
+
+# Example 2: Using custom MCP audience
+kubectl create token k-mcp-sa \
+  --audience=https://127.0.0.1:6443 \
+  --audience=my-custom-mcp \
+  --audience=default \
+  --duration=24h
+```
+
+#### 6. Start the MCP Server
+
+```bash
+# Using default settings (port 8080, audience "k-mcp") with CA certificate
+./k-mcp --certificate-authority ca.cert
+
+# Using custom settings with CA certificate
+./k-mcp --port 9090 --audience my-custom-mcp --certificate-authority ca.cert
+```
+
+#### 7. Configure Your MCP Client
+
+Use the generated token to authenticate with the MCP server. The token should be provided as a Bearer token in the Authorization header when making requests to the MCP server endpoint.
+
+**Important**: If you specified a custom audience via the `--audience` flag when starting the server, ensure your token includes that exact audience as the second audience parameter.
+
+### Token Requirements Summary
+
+- **Expiration**: Token must not be expired
+- **Not Before**: Token must be currently valid (if nbf claim is present)
+- **Audiences**: Must contain exactly three audiences:
+  1. Kubernetes API server URL (used for cluster communication)
+  2. MCP server audience (used for server authentication)
+  3. Default audience (cluster default)
+
+### Security Considerations
+
+- Service account tokens have limited lifetime - regenerate as needed
+- Use least privilege principle when assigning RBAC permissions
+- Consider using namespace-scoped roles instead of cluster roles when possible
+- Regularly rotate service account tokens
+- Store tokens securely and avoid logging them
+
 ---
 
 *This README was mostly generated with generative AI assistance.*

@@ -211,7 +211,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 			return nil, nil, fmt.Errorf("failed to list resources: %w", err)
 		}
 
-		var result []map[string]interface{}
+		result := make([]map[string]interface{}, 0, len(resources.Items))
 		for _, item := range resources.Items {
 			result = append(result, item.Object)
 		}
@@ -404,6 +404,7 @@ func (s *Server) Run(ctx context.Context, dynamicConfig *DynamicConfig) error {
 		}
 
 		// All resources validated successfully, now get user confirmation
+
 		resourcePreview := fmt.Sprintf(`The following resources will be processed:\n\n%s\n\nDo you want to proceed?`, strings.Join(resourceSummaries, "\n"))
 		elicitResult, err := request.Session.Elicit(context.Background(), &mcp.ElicitParams{
 			Message: resourcePreview,
